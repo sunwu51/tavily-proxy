@@ -1,0 +1,13 @@
+name = "tavily-proxy"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# For production, set AUTH_KEY as a secret:
+#   npx wrangler secret put AUTH_KEY
+# For local dev, set it in .dev.vars (see below)
+
+[[kv_namespaces]]
+binding = "KV"
+id = "8c9031329f264adb85952b069e2b5cce"
+preview_id = "local-dev-kv"
