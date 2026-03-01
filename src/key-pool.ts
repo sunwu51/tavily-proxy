@@ -40,6 +40,28 @@ export async function queryRemainingCredit(apiKey: string): Promise<number> {
 }
 
 /**
+ * List all keys from KV using cached values (no Tavily API call).
+ */
+async function listKeysFromCache(kv: KVNamespace): Promise<KeyInfo[]> {
+  const keys: KeyInfo[] = [];
+  let cursor: string | undefined;
+
+  do {
+    const result = await kv.list({ cursor });
+    for (const key of result.keys) {
+      const value = await kv.get(key.name);
+      keys.push({
+        apiKey: key.name,
+        remainingCredit: value ? Number(value) : 0,
+      });
+    }
+    cursor = result.list_complete ? undefined : result.cursor;
+  } while (cursor);
+
+  return keys;
+}
+
+/**
  * List all keys from KV with their remaining credits.
  * Queries Tavily API for each key to update the actual remaining credit.
  */
@@ -81,14 +103,20 @@ export async function listKeys(kv: KVNamespace): Promise<KeyInfo[]> {
 }
 
 /**
- * Pick the key with the most remaining credit.
+ * Pick the key with the most remaining credit using cached KV values.
+ * If multiple keys have the same credit, pick the first one alphabetically.
  * Returns null if no keys are available.
  */
 export async function pickBestKey(kv: KVNamespace): Promise<string | null> {
-  const keys = await listKeys(kv);
+  const keys = await listKeysFromCache(kv);
   if (keys.length === 0) return null;
 
-  keys.sort((a, b) => b.remainingCredit - a.remainingCredit);
+  keys.sort((a, b) => {
+    if (b.remainingCredit !== a.remainingCredit) {
+      return b.remainingCredit - a.remainingCredit;
+    }
+    return a.apiKey.localeCompare(b.apiKey);
+  });
   const best = keys[0];
   if (best.remainingCredit <= 0) return null;
   return best.apiKey;
@@ -119,5 +147,20 @@ export async function deductCredit(kv: KVNamespace, apiKey: string, amount: numb
   if (current !== null) {
     const newVal = Math.max(0, Number(current) - amount);
     await kv.put(apiKey, String(newVal));
+  }
+}
+
+/**
+ * With 10% probability, query the real usage from Tavily and update KV.
+ * Used after MCP tool calls to periodically sync without adding latency every time.
+ */
+export async function maybeSyncKeyUsage(kv: KVNamespace, apiKey: string): Promise<void> {
+  if (Math.random() >= 0.1) return;
+  try {
+    const remaining = await queryRemainingCredit(apiKey);
+    await kv.put(apiKey, String(remaining));
+  } catch (err) {
+    console.error(`[sync] Failed to sync usage for key ${apiKey.substring(0, 13)}...:`, err);
+    await kv.put(apiKey, "0");
   }
 }

@@ -4,7 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { toFetchResponse, toReqRes } from "fetch-to-node";
 import { z } from "zod";
 import * as tavilyClient from "./tavily-client.js";
-import { pickBestKey, addKey, deleteKey, listKeys, deductCredit } from "./key-pool.js";
+import { pickBestKey, addKey, deleteKey, listKeys, deductCredit, maybeSyncKeyUsage } from "./key-pool.js";
 
 type Env = {
   KV: KVNamespace;
@@ -123,6 +123,7 @@ function createMcpServer(kv: KVNamespace) {
         // Deduct credit (search_depth advanced = 2, otherwise 1)
         const cost = params.search_depth === "advanced" ? 2 : 1;
         await deductCredit(kv, apiKey, cost);
+        await maybeSyncKeyUsage(kv, apiKey);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
@@ -187,6 +188,7 @@ function createMcpServer(kv: KVNamespace) {
         const costPer5 = params.extract_depth === "advanced" ? 2 : 1;
         const cost = Math.max(1, Math.ceil(urlCount / 5) * costPer5);
         await deductCredit(kv, apiKey, cost);
+        await maybeSyncKeyUsage(kv, apiKey);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
@@ -290,6 +292,7 @@ function createMcpServer(kv: KVNamespace) {
         const result = await tavilyClient.crawl(apiKey, params);
         // Estimate cost conservatively
         await deductCredit(kv, apiKey, 2);
+        await maybeSyncKeyUsage(kv, apiKey);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
@@ -370,6 +373,7 @@ function createMcpServer(kv: KVNamespace) {
       try {
         const result = await tavilyClient.map(apiKey, params);
         await deductCredit(kv, apiKey, 1);
+        await maybeSyncKeyUsage(kv, apiKey);
         return {
           content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
         };
