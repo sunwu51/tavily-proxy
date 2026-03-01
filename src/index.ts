@@ -4,7 +4,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { toFetchResponse, toReqRes } from "fetch-to-node";
 import { z } from "zod";
 import * as tavilyClient from "./tavily-client.js";
-import { pickBestKey, addKey, deleteKey, listKeys, deductCredit, maybeSyncKeyUsage } from "./key-pool.js";
+import { pickBestKey, addKey, deleteKey, listKeys, deductCredit, maybeSyncKeyUsage, invalidateKey } from "./key-pool.js";
 
 type Env = {
   KV: KVNamespace;
@@ -29,6 +29,51 @@ app.use("*", async (c, next) => {
 
   return next();
 });
+
+// ---------------------------------------------------------------------------
+// Helper: call a Tavily tool with automatic key fallback on auth errors.
+// If the selected key returns a 4xx auth error, invalidate it and retry
+// with the next best key. Repeats until success or no keys remain.
+// ---------------------------------------------------------------------------
+async function withKeyFallback(
+  kv: KVNamespace,
+  toolName: string,
+  fn: (apiKey: string) => Promise<unknown>,
+  postSuccess: (apiKey: string) => Promise<void>
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
+  const triedKeys = new Set<string>();
+
+  while (true) {
+    const apiKey = await pickBestKey(kv);
+    if (!apiKey || triedKeys.has(apiKey)) {
+      return {
+        content: [{ type: "text", text: "Error: No available API keys in the pool. Please add keys first." }],
+        isError: true,
+      };
+    }
+    triedKeys.add(apiKey);
+    console.log(`[MCP] ${toolName} using key: ${apiKey.substring(0, 13)}...`);
+    try {
+      const result = await fn(apiKey);
+      await postSuccess(apiKey);
+      return {
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Invalidate key and retry on auth errors
+      if (/Tavily API error (401|403)/.test(message)) {
+        console.error(`[MCP] ${toolName} key ${apiKey.substring(0, 13)}... got auth error, invalidating and retrying`);
+        await invalidateKey(kv, apiKey);
+        continue;
+      }
+      return {
+        content: [{ type: "text", text: `Error calling Tavily ${toolName}: ${message}` }],
+        isError: true,
+      };
+    }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helper: create a fresh MCP server with Tavily tools bound to a specific KV
@@ -110,30 +155,14 @@ function createMcpServer(kv: KVNamespace) {
         .describe("Boost results from a specific country. Only for 'general' topic."),
     },
     async (params) => {
-      const apiKey = await pickBestKey(kv);
-      if (!apiKey) {
-        return {
-          content: [{ type: "text", text: "Error: No API keys available in the pool. Please add keys first." }],
-          isError: true,
-        };
-      }
-      console.log(`[MCP] tavily-search using key: ${apiKey.substring(0, 13)}...`);
-      try {
-        const result = await tavilyClient.search(apiKey, params);
-        // Deduct credit (search_depth advanced = 2, otherwise 1)
-        const cost = params.search_depth === "advanced" ? 2 : 1;
-        await deductCredit(kv, apiKey, cost);
-        await maybeSyncKeyUsage(kv, apiKey);
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        return {
-          content: [{ type: "text", text: `Error calling Tavily search: ${message}` }],
-          isError: true,
-        };
-      }
+      const cost = params.search_depth === "advanced" ? 2 : 1;
+      return withKeyFallback(kv, "tavily-search",
+        (apiKey) => tavilyClient.search(apiKey, params),
+        async (apiKey) => {
+          await deductCredit(kv, apiKey, cost);
+          await maybeSyncKeyUsage(kv, apiKey);
+        }
+      );
     }
   );
 
@@ -173,32 +202,16 @@ function createMcpServer(kv: KVNamespace) {
         .describe("Max relevant chunks per source (1-5). Only when 'query' is provided."),
     },
     async (params) => {
-      const apiKey = await pickBestKey(kv);
-      if (!apiKey) {
-        return {
-          content: [{ type: "text", text: "Error: No API keys available in the pool. Please add keys first." }],
-          isError: true,
-        };
-      }
-      console.log(`[MCP] tavily-extract using key: ${apiKey.substring(0, 13)}...`);
-      try {
-        const result = await tavilyClient.extract(apiKey, params);
-        // Estimate cost: 1 credit per 5 successful URLs for basic, 2 per 5 for advanced
-        const urlCount = Array.isArray(params.urls) ? params.urls.length : 1;
-        const costPer5 = params.extract_depth === "advanced" ? 2 : 1;
-        const cost = Math.max(1, Math.ceil(urlCount / 5) * costPer5);
-        await deductCredit(kv, apiKey, cost);
-        await maybeSyncKeyUsage(kv, apiKey);
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        return {
-          content: [{ type: "text", text: `Error calling Tavily extract: ${message}` }],
-          isError: true,
-        };
-      }
+      const urlCount = Array.isArray(params.urls) ? params.urls.length : 1;
+      const costPer5 = params.extract_depth === "advanced" ? 2 : 1;
+      const cost = Math.max(1, Math.ceil(urlCount / 5) * costPer5);
+      return withKeyFallback(kv, "tavily-extract",
+        (apiKey) => tavilyClient.extract(apiKey, params),
+        async (apiKey) => {
+          await deductCredit(kv, apiKey, cost);
+          await maybeSyncKeyUsage(kv, apiKey);
+        }
+      );
     }
   );
 
@@ -280,29 +293,13 @@ function createMcpServer(kv: KVNamespace) {
         .describe("Max relevant chunks per source (1-5). Only when 'instructions' provided."),
     },
     async (params) => {
-      const apiKey = await pickBestKey(kv);
-      if (!apiKey) {
-        return {
-          content: [{ type: "text", text: "Error: No API keys available in the pool. Please add keys first." }],
-          isError: true,
-        };
-      }
-      console.log(`[MCP] tavily-crawl using key: ${apiKey.substring(0, 13)}...`);
-      try {
-        const result = await tavilyClient.crawl(apiKey, params);
-        // Estimate cost conservatively
-        await deductCredit(kv, apiKey, 2);
-        await maybeSyncKeyUsage(kv, apiKey);
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        return {
-          content: [{ type: "text", text: `Error calling Tavily crawl: ${message}` }],
-          isError: true,
-        };
-      }
+      return withKeyFallback(kv, "tavily-crawl",
+        (apiKey) => tavilyClient.crawl(apiKey, params),
+        async (apiKey) => {
+          await deductCredit(kv, apiKey, 2);
+          await maybeSyncKeyUsage(kv, apiKey);
+        }
+      );
     }
   );
 
@@ -362,28 +359,13 @@ function createMcpServer(kv: KVNamespace) {
         .describe("Whether to include external domain links."),
     },
     async (params) => {
-      const apiKey = await pickBestKey(kv);
-      if (!apiKey) {
-        return {
-          content: [{ type: "text", text: "Error: No API keys available in the pool. Please add keys first." }],
-          isError: true,
-        };
-      }
-      console.log(`[MCP] tavily-map using key: ${apiKey.substring(0, 13)}...`);
-      try {
-        const result = await tavilyClient.map(apiKey, params);
-        await deductCredit(kv, apiKey, 1);
-        await maybeSyncKeyUsage(kv, apiKey);
-        return {
-          content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
-        };
-      } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : String(err);
-        return {
-          content: [{ type: "text", text: `Error calling Tavily map: ${message}` }],
-          isError: true,
-        };
-      }
+      return withKeyFallback(kv, "tavily-map",
+        (apiKey) => tavilyClient.map(apiKey, params),
+        async (apiKey) => {
+          await deductCredit(kv, apiKey, 1);
+          await maybeSyncKeyUsage(kv, apiKey);
+        }
+      );
     }
   );
 

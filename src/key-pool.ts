@@ -117,6 +117,14 @@ export async function deductCredit(kv: KVNamespace, apiKey: string, amount: numb
 }
 
 /**
+ * Set a key's remaining credit to 0 in KV (e.g. on 401/403 errors).
+ */
+export async function invalidateKey(kv: KVNamespace, apiKey: string): Promise<void> {
+  console.log(`[pool] Invalidating key ${apiKey.substring(0, 13)}... (setting credit to -1000)`);
+  await kv.put(apiKey, "-1000");
+}
+
+/**
  * Query the real usage from Tavily and update KV after each MCP tool call.
  */
 export async function maybeSyncKeyUsage(kv: KVNamespace, apiKey: string): Promise<void> {
