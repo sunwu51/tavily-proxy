@@ -128,12 +128,17 @@ export async function invalidateKey(kv: KVNamespace, apiKey: string): Promise<vo
  * Query the real usage from Tavily and update KV after each MCP tool call.
  */
 export async function maybeSyncKeyUsage(kv: KVNamespace, apiKey: string): Promise<void> {
-
   try {
     const remaining = await queryRemainingCredit(apiKey);
     await kv.put(apiKey, String(remaining));
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (/429/.test(message)) {
+      console.error(`[sync] Rate limited (429) for key ${apiKey.substring(0, 13)}..., keeping cached value`);
+      return;
+    }
     console.error(`[sync] Failed to sync usage for key ${apiKey.substring(0, 13)}...:`, err);
     await kv.put(apiKey, "0");
   }
+}
 }
