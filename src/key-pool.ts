@@ -62,44 +62,10 @@ async function listKeysFromCache(kv: KVNamespace): Promise<KeyInfo[]> {
 }
 
 /**
- * List all keys from KV with their remaining credits.
- * Queries Tavily API for each key to update the actual remaining credit.
+ * List all keys from KV with their remaining credits (reads from cache only).
  */
 export async function listKeys(kv: KVNamespace): Promise<KeyInfo[]> {
-  const keys: KeyInfo[] = [];
-  let cursor: string | undefined;
-
-  // First, collect all key names
-  const keyNames: string[] = [];
-  do {
-    const result = await kv.list({ cursor });
-    for (const key of result.keys) {
-      keyNames.push(key.name);
-    }
-    cursor = result.list_complete ? undefined : result.cursor;
-  } while (cursor);
-
-  // Query actual usage for each key and update KV
-  for (const apiKey of keyNames) {
-    try {
-      const remaining = await queryRemainingCredit(apiKey);
-      await kv.put(apiKey, String(remaining));
-      keys.push({
-        apiKey,
-        remainingCredit: remaining,
-      });
-    } catch (err) {
-      // If query fails, set remaining credit to 0 and update KV
-      console.error(`Failed to query usage for key ${apiKey}:`, err);
-      await kv.put(apiKey, "0");
-      keys.push({
-        apiKey,
-        remainingCredit: 0,
-      });
-    }
-  }
-
-  return keys;
+  return listKeysFromCache(kv);
 }
 
 /**
