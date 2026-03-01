@@ -11,3 +11,8 @@ compatibility_flags = ["nodejs_compat"]
 binding = "KV"
 id = "8c9031329f264adb85952b069e2b5cce"
 preview_id = "local-dev-kv"
+
+[observability]
+[observability.logs]
+enabled = true
+invocation_logs = true
