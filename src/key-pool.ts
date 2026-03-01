@@ -69,8 +69,8 @@ export async function listKeys(kv: KVNamespace): Promise<KeyInfo[]> {
 }
 
 /**
- * Pick the key with the most remaining credit using cached KV values.
- * If multiple keys have the same credit, pick the first one alphabetically.
+ * Pick a random key from the top 3 keys with the most remaining credit.
+ * If multiple keys have the same credit, sort alphabetically for stability.
  * Returns null if no keys are available.
  */
 export async function pickBestKey(kv: KVNamespace): Promise<string | null> {
@@ -83,9 +83,13 @@ export async function pickBestKey(kv: KVNamespace): Promise<string | null> {
     }
     return a.apiKey.localeCompare(b.apiKey);
   });
-  const best = keys[0];
-  if (best.remainingCredit <= 0) return null;
-  return best.apiKey;
+
+  // Filter out keys with no credit, then take top 3
+  const candidates = keys.filter(k => k.remainingCredit > 0).slice(0, 3);
+  if (candidates.length === 0) return null;
+
+  const picked = candidates[Math.floor(Math.random() * candidates.length)];
+  return picked.apiKey;
 }
 
 /**
