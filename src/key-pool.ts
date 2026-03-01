@@ -13,6 +13,7 @@ export interface KeyInfo {
  * Query the Tavily /usage endpoint to get remaining credits for a key.
  */
 export async function queryRemainingCredit(apiKey: string): Promise<number> {
+  const keyPrefix = apiKey.substring(0, 13);
   const res = await fetch("https://api.tavily.com/usage", {
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -21,6 +22,7 @@ export async function queryRemainingCredit(apiKey: string): Promise<number> {
 
   if (!res.ok) {
     const text = await res.text();
+    console.log(`[usage] key=${keyPrefix}... response=${res.status} ${text}`);
     throw new Error(`Failed to query usage for key: ${res.status} ${text}`);
   }
 
@@ -28,6 +30,8 @@ export async function queryRemainingCredit(apiKey: string): Promise<number> {
     key: { usage: number; limit: number | null };
     account: { plan_limit: number; plan_usage: number };
   };
+
+  console.log(`[usage] key=${keyPrefix}... response=${JSON.stringify(data)}`);
 
   // remaining = limit - usage. If limit is null (unlimited), report a large number.
   const limit = data.key.limit ?? data.account.plan_limit;
