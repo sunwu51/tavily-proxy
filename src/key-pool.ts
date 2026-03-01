@@ -117,11 +117,10 @@ export async function deductCredit(kv: KVNamespace, apiKey: string, amount: numb
 }
 
 /**
- * With 10% probability, query the real usage from Tavily and update KV.
- * Used after MCP tool calls to periodically sync without adding latency every time.
+ * Query the real usage from Tavily and update KV after each MCP tool call.
  */
 export async function maybeSyncKeyUsage(kv: KVNamespace, apiKey: string): Promise<void> {
-  if (Math.random() >= 0.1) return;
+
   try {
     const remaining = await queryRemainingCredit(apiKey);
     await kv.put(apiKey, String(remaining));
