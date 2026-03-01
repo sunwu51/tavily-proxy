@@ -37,22 +37,41 @@ export async function queryRemainingCredit(apiKey: string): Promise<number> {
 
 /**
  * List all keys from KV with their remaining credits.
+ * Queries Tavily API for each key to update the actual remaining credit.
  */
 export async function listKeys(kv: KVNamespace): Promise<KeyInfo[]> {
   const keys: KeyInfo[] = [];
   let cursor: string | undefined;
 
+  // First, collect all key names
+  const keyNames: string[] = [];
   do {
     const result = await kv.list({ cursor });
     for (const key of result.keys) {
-      const value = await kv.get(key.name);
-      keys.push({
-        apiKey: key.name,
-        remainingCredit: value ? Number(value) : 0,
-      });
+      keyNames.push(key.name);
     }
     cursor = result.list_complete ? undefined : result.cursor;
   } while (cursor);
+
+  // Query actual usage for each key and update KV
+  for (const apiKey of keyNames) {
+    try {
+      const remaining = await queryRemainingCredit(apiKey);
+      await kv.put(apiKey, String(remaining));
+      keys.push({
+        apiKey,
+        remainingCredit: remaining,
+      });
+    } catch (err) {
+      // If query fails, use the cached value from KV
+      console.error(`Failed to query usage for key ${apiKey}:`, err);
+      const value = await kv.get(apiKey);
+      keys.push({
+        apiKey,
+        remainingCredit: value ? Number(value) : 0,
+      });
+    }
+  }
 
   return keys;
 }
