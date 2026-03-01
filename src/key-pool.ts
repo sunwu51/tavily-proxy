@@ -63,12 +63,12 @@ export async function listKeys(kv: KVNamespace): Promise<KeyInfo[]> {
         remainingCredit: remaining,
       });
     } catch (err) {
-      // If query fails, use the cached value from KV
+      // If query fails, set remaining credit to 0 and update KV
       console.error(`Failed to query usage for key ${apiKey}:`, err);
-      const value = await kv.get(apiKey);
+      await kv.put(apiKey, "0");
       keys.push({
         apiKey,
-        remainingCredit: value ? Number(value) : 0,
+        remainingCredit: 0,
       });
     }
   }

@@ -117,7 +117,7 @@ function createMcpServer(kv: KVNamespace) {
           isError: true,
         };
       }
-      console.log(`[MCP] tavily-search using key: ${apiKey.substring(0, 10)}...`);
+      console.log(`[MCP] tavily-search using key: ${apiKey.substring(0, 13)}...`);
       try {
         const result = await tavilyClient.search(apiKey, params);
         // Deduct credit (search_depth advanced = 2, otherwise 1)
@@ -179,7 +179,7 @@ function createMcpServer(kv: KVNamespace) {
           isError: true,
         };
       }
-      console.log(`[MCP] tavily-extract using key: ${apiKey.substring(0, 10)}...`);
+      console.log(`[MCP] tavily-extract using key: ${apiKey.substring(0, 13)}...`);
       try {
         const result = await tavilyClient.extract(apiKey, params);
         // Estimate cost: 1 credit per 5 successful URLs for basic, 2 per 5 for advanced
@@ -285,7 +285,7 @@ function createMcpServer(kv: KVNamespace) {
           isError: true,
         };
       }
-      console.log(`[MCP] tavily-crawl using key: ${apiKey.substring(0, 10)}...`);
+      console.log(`[MCP] tavily-crawl using key: ${apiKey.substring(0, 13)}...`);
       try {
         const result = await tavilyClient.crawl(apiKey, params);
         // Estimate cost conservatively
@@ -366,7 +366,7 @@ function createMcpServer(kv: KVNamespace) {
           isError: true,
         };
       }
-      console.log(`[MCP] tavily-map using key: ${apiKey.substring(0, 10)}...`);
+      console.log(`[MCP] tavily-map using key: ${apiKey.substring(0, 13)}...`);
       try {
         const result = await tavilyClient.map(apiKey, params);
         await deductCredit(kv, apiKey, 1);
