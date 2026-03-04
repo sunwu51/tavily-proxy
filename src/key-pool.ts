@@ -69,23 +69,12 @@ export async function listKeys(kv: KVNamespace): Promise<KeyInfo[]> {
 }
 
 /**
- * Pick a random key from the top 3 keys with the most remaining credit.
- * If multiple keys have the same credit, sort alphabetically for stability.
+ * Pick a random key from all keys with remaining credit > 0.
  * Returns null if no keys are available.
  */
 export async function pickBestKey(kv: KVNamespace): Promise<string | null> {
   const keys = await listKeysFromCache(kv);
-  if (keys.length === 0) return null;
-
-  keys.sort((a, b) => {
-    if (b.remainingCredit !== a.remainingCredit) {
-      return b.remainingCredit - a.remainingCredit;
-    }
-    return a.apiKey.localeCompare(b.apiKey);
-  });
-
-  // Filter out keys with no credit, then take top 3
-  const candidates = keys.filter(k => k.remainingCredit > 0).slice(0, 3);
+  const candidates = keys.filter(k => k.remainingCredit > 0);
   if (candidates.length === 0) return null;
 
   const picked = candidates[Math.floor(Math.random() * candidates.length)];
@@ -144,5 +133,4 @@ export async function maybeSyncKeyUsage(kv: KVNamespace, apiKey: string): Promis
     console.error(`[sync] Failed to sync usage for key ${apiKey.substring(0, 13)}...:`, err);
     await kv.put(apiKey, "0");
   }
-}
 }
